@@ -1,4 +1,4 @@
-﻿--[[
+--[[
 =============================================================================
 OBS Zoom Pro - Intelligent Camera Zoom for OBS Studio
 =============================================================================
@@ -392,22 +392,47 @@ end
 --================================================
 -- MODULE: Platform Layer (M01)
 --================================================
--- Cross-platform mouse/cursor detection using FFI
+-- Cross-platform mouse/cursor detection
 -- Windows: Full support (position, click, cursor shape)
 -- Linux/Mac: Basic support (position only)
 
-local ffi = require("ffi")
+-- Try to load FFI (LuaJIT only), fallback to nil if not available
+local ffi = nil
+local ffi_loaded = false
+local ok, ffi_module = pcall(require, "ffi")
+if ok and ffi_module then
+    ffi = ffi_module
+    ffi_loaded = true
+end
 
--- Platform detection
-local IS_WINDOWS = ffi.os == "Windows"
-local IS_LINUX = ffi.os == "Linux"
-local IS_MACOS = ffi.os == "OSX"
+-- Platform detection (using Lua to avoid FFI dependency)
+local function detect_platform()
+    local os_name = jit and jit.os or "Unknown"
+    return {
+        WINDOWS = os_name == "Windows",
+        LINUX = os_name == "Linux",
+        MACOS = os_name == "OSX"
+    }
+end
+
+local platform = detect_platform()
+local IS_WINDOWS = platform.WINDOWS
+local IS_LINUX = platform.LINUX
+local IS_MACOS = platform.MACOS
 
 -- Log platform detection
-log("Platform detected: " .. ffi.os .. (IS_WINDOWS and " (Full support)" or " (Basic support)"))
+log("Platform detected: " .. (jit and jit.os or "Unknown") .. (IS_WINDOWS and " (Full support)" or " (Basic support)"))
 
--- FFI declarations for Windows
-if IS_WINDOWS then
+-- Virtual key codes (Lua constants instead of C #define)
+local VK_LBUTTON = 0x01
+local VK_RBUTTON = 0x02
+local VK_MBUTTON = 0x04
+local VK_CONTROL = 0x11
+local VK_SHIFT = 0x10
+local VK_MENU = 0x12  -- Alt
+
+-- FFI declarations for Windows (only if FFI is available)
+if IS_WINDOWS and ffi_loaded then
     ffi.cdef[[
         // Mouse position
         typedef struct { long x; long y; } POINT;
@@ -424,14 +449,6 @@ if IS_WINDOWS then
 
         // Click state
         short GetAsyncKeyState(int vKey);
-
-        // Virtual key codes
-        #define VK_LBUTTON 0x01
-        #define VK_RBUTTON 0x02
-        #define VK_MBUTTON 0x04
-        #define VK_CONTROL 0x11
-        #define VK_SHIFT 0x10
-        #define VK_MENU 0x12  // Alt
     ]]
 end
 
@@ -2991,13 +3008,13 @@ local CursorAssets = {
 
 -- Get the platform-specific asset directory
 function CursorAssets:get_platform_dir()
-    if ffi and ffi.os == "Windows" then
+    if IS_WINDOWS then
         local appdata = os.getenv("APPDATA")
         return appdata and (appdata .. "\\obs-studio\\obs-zoom-pro\\cursors") or nil
-    elseif ffi and ffi.os == "Linux" then
+    elseif IS_LINUX then
         local home = os.getenv("HOME")
         return home and (home .. "/.config/obs-studio/obs-zoom-pro/cursors") or nil
-    elseif ffi and ffi.os == "OSX" then
+    elseif IS_MACOS then
         local home = os.getenv("HOME")
         return home and (home .. "/Library/Application Support/obs-studio/obs-zoom-pro/cursors") or nil
     end
@@ -3019,7 +3036,7 @@ function CursorAssets:ensure_extracted()
 
     -- Create directory
     local cmd
-    if ffi and ffi.os == "Windows" then
+    if IS_WINDOWS then
         cmd = 'mkdir "' .. dir .. '" 2>nul'
     else
         cmd = 'mkdir -p "' .. dir .. '"'
@@ -3027,7 +3044,7 @@ function CursorAssets:ensure_extracted()
     os.execute(cmd)
 
     -- Check if assets exist
-    local sep = (ffi and ffi.os == "Windows") and "\\" or "/"
+    local sep = IS_WINDOWS and "\\" or "/"
     local arrow_path = dir .. sep .. "arrow.png"
 
     local f = io.open(arrow_path, "rb")
@@ -3086,7 +3103,7 @@ function CursorAssets:get_cursor_path(cursor_type)
         return nil
     end
 
-    local sep = (ffi and ffi.os == "Windows") and "\\" or "/"
+    local sep = IS_WINDOWS and "\\" or "/"
     local filename = (cursor_type or "arrow") .. ".png"
     return self.dir .. sep .. filename
 end
@@ -3253,7 +3270,7 @@ function CursorRenderer:update(dt, raw_mouse, camera_crop)
     -- Swap cursor image if needed
     if is_pointer ~= self.was_pointer then
         local asset_dir = cursor_assets_get_dir()
-        local sep = (ffi and ffi.os == "Windows") and "\\" or "/"
+        local sep = IS_WINDOWS and "\\" or "/"
         local new_file = is_pointer and (asset_dir .. sep .. "pointer.png") or (asset_dir .. sep .. "arrow.png")
 
         local s = obs.obs_source_get_settings(self.source)
